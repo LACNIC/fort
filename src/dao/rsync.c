@@ -536,10 +536,6 @@ rsync_json2ctx(json_t *json, struct cache_mapping *root,
 	error = json2cseq(&ctx->fbseq, child, ctx->fb_path, true);
 	if (error)
 		goto files;
-
-	printf("rsync context from JSON:\n");
-	filerefs_print(&files, 2);
-
 	error = json_get_object(json, "fallbacks", &child);
 	if (error)
 		goto cseq;

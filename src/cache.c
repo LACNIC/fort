@@ -871,7 +871,6 @@ rsync_post_process(struct cache_node *node)
 			return VV_FAIL;
 		return VV_CONTINUE;
 	case CT_TA:
-		tactx_print(node->ctx.v.ta, 0);
 		return VV_CONTINUE;
 
 	case CT_RRDP:
