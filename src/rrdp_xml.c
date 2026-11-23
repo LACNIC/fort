@@ -2148,7 +2148,7 @@ swap_until_sorted(struct rrdp_xml_reader *rdr, array_index i, BIGNUM *min,
 {
 	struct notification_delta *array;
 	size_t deltas_len;
-	BN_ULONG j;
+	BN_ULONG diffw, j;
 	struct notification_delta tmp;
 
 	array = rdr->c.notif.deltas.arr;
@@ -2157,7 +2157,12 @@ swap_until_sorted(struct rrdp_xml_reader *rdr, array_index i, BIGNUM *min,
 	while (true) {
 		if (!BN_sub(diff, array[i].serial.num, min))
 			return pr_crypto_err("BN_sub() returned error.");
-		j = deltas_len - BN_get_word(diff) - 1;
+
+		diffw = BN_get_word(diff);
+		if (diffw >= deltas_len)
+			return pr_err("The serials listed in the Notification's deltas do not form a contiguous sequence");
+
+		j = deltas_len - diffw - 1u;
 		if (i == j)
 			return 0;
 		if (BN_cmp(array[i].serial.num, array[j].serial.num) == 0) {
