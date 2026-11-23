@@ -218,6 +218,8 @@ rsync_reindex(struct rsync_ctx **_ctx, struct cache_mapping const *root)
 		ctx->remote_path = path_join(root->path, "rmt");
 		ctx->new_path = path_join(root->path, "new");
 		ctx->fb_path = path_join(root->path, "fbk");
+		panic_on_fail(pthread_mutex_init(&ctx->fbs.lock, NULL),
+		    "pthread_mutex_init");
 		cseq_init(&ctx->fbseq, ctx->fb_path, 0, false);
 	}
 
@@ -227,9 +229,6 @@ rsync_reindex(struct rsync_ctx **_ctx, struct cache_mapping const *root)
 	error = index_files(root, ctx->new_path, &ctx->new, NULL);
 	if (error)
 		goto ouch;
-
-	panic_on_fail(pthread_mutex_init(&ctx->fbs.lock, NULL),
-	    "pthread_mutex_init");
 
 	return 0;
 
@@ -418,7 +417,7 @@ rsync_cleanup(struct rsync_ctx *ctx)
 	 */
 
 	pr_trc("    Deleting noncommitted fallback boxes.");
-	fallbacks_cleanup(&ctx->fbs);
+	fallbacks_drop_noncommitted(&ctx->fbs);
 
 	if (HASH_COUNT(ctx->fbs.ht) == 0) {
 		pr_trc("    No fallbacks left.");
@@ -453,7 +452,7 @@ rsync_free(struct rsync_ctx *ctx)
 	filerefs_clear(&ctx->new, false);
 	cseq_cleanup(&ctx->fbseq);
 
-	fallbacks_clear(&ctx->fbs, false);
+	fallbacks_cleanup(&ctx->fbs, false);
 
 	free(ctx);
 }

@@ -129,7 +129,7 @@ static void
 session_free(struct rrdp_session *session)
 {
 	session_reset(session, false);
-	fallbacks_clear(&session->fbs, false);
+	fallbacks_cleanup(&session->fbs, false);
 	free(session->id);
 	free(session);
 }
@@ -732,7 +732,7 @@ rrdpctx_cleanup(struct rrdp_ctx *ctx)
 
 	pr_trc("    Deleting noncommitted fallbacks.");
 	TAILQ_FOREACH(session, &ctx->sessions, lh)
-		fallbacks_cleanup(&session->fbs);
+		fallbacks_drop_noncommitted(&session->fbs);
 
 	pr_trc("    Cleaning up sessions.");
 	cleanup_sessions(ctx);

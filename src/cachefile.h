@@ -105,8 +105,8 @@ struct rpp;
 void fallback_add(struct fallback_ht *, struct uri *, struct rpp *);
 void fallback_commit(struct fallback_ht *, struct fallback *);
 void fallback_free(struct fallback *, bool);
-void fallbacks_clear(struct fallback_ht *, bool);
-void fallbacks_cleanup(struct fallback_ht *);
+void fallbacks_cleanup(struct fallback_ht *, bool);
+void fallbacks_drop_noncommitted(struct fallback_ht *);
 void fallbacks_print(struct fallback_ht *, int);
 
 json_t *fallback2json(struct fallback *);

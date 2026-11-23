@@ -568,7 +568,7 @@ fallback_free(struct fallback *fb, bool rm_files)
 }
 
 void
-fallbacks_clear(struct fallback_ht *fbs, bool rm_files)
+fallbacks_cleanup(struct fallback_ht *fbs, bool rm_files)
 {
 	struct fallback *fb, *tmp;
 
@@ -576,10 +576,12 @@ fallbacks_clear(struct fallback_ht *fbs, bool rm_files)
 		HASH_DEL(fbs->ht, fb);
 		fallback_free(fb, rm_files);
 	}
+
+	pthread_mutex_destroy(&fbs->lock);
 }
 
 void
-fallbacks_cleanup(struct fallback_ht *fbs)
+fallbacks_drop_noncommitted(struct fallback_ht *fbs)
 {
 	struct fallback *fb, *tmp;
 
