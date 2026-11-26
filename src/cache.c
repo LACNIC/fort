@@ -706,6 +706,58 @@ fail:	flush_nodes();
 	return error;
 }
 
+static int
+write_metadata(struct cache_node *node)
+{
+	char *filename;
+	json_t *json;
+	int error;
+
+	json = node2json(node);
+	if (!json)
+		return EINVAL;
+	filename = str_concat(node->map.path, ".json");
+
+	pr_trc("echo \"$json\" > %s", filename);
+	if (json_dump_file(json, filename, JSON_INDENT(2)) != 0) {
+		error = pr_err("Unable to write %s; unknown cause.", filename);
+		goto end;
+	}
+
+	switch (node->ctx.type) {
+	case CT_RRDP:
+		rrdpctx_post_index(node->ctx.v.rrdp);
+		break;
+	case CT_RSYNC:
+	case CT_TA:
+		break;
+	}
+
+	error = 0;
+end:	free(filename);
+	json_decref(json);
+	return error;
+}
+
+static void
+rm_metadata(struct cache_node *node)
+{
+	char *filename;
+	int error;
+
+	filename = str_concat(node->map.path, ".json");
+	pr_trc("rm -f %s", filename);
+	if (unlink(filename) < 0) {
+		error = errno;
+		if (error == ENOENT)
+			pr_clutter("%s already doesn't exist.", filename);
+		else
+			pr_wrn("Cannot rm %s: %s", filename, strerror(errno));
+	}
+
+	free(filename);
+}
+
 static validation_verdict
 dl_rsync(struct cache_node *module)
 {
@@ -736,8 +788,10 @@ dl_rrdp(struct cache_node *notif)
 	if (rrdp_update(&notif->map.url, notif->map.path, notif->success_ts,
 			&changed, &notif->ctx.v.rrdp))
 		return VV_FAIL;
-	if (changed)
+	if (changed) {
 		notif->success_ts = notif->attempt_ts;
+		write_metadata(notif);
+	}
 	return VV_CONTINUE;
 }
 
@@ -769,6 +823,7 @@ dl_ta_http(struct cache_node *node)
 	if (changed) {
 		node->success_ts = node->attempt_ts;
 		tactx_set_refresh(node->ctx.v.ta, tmppath);
+		write_metadata(node);
 	} else {
 		tactx_set_unchanged(node->ctx.v.ta);
 	}
@@ -817,58 +872,6 @@ provide_node(struct cache_table *tbl, struct uri const *url,
 	return node;
 }
 
-static void
-rm_metadata(struct cache_node *node)
-{
-	char *filename;
-	int error;
-
-	filename = str_concat(node->map.path, ".json");
-	pr_trc("rm -f %s", filename);
-	if (unlink(filename) < 0) {
-		error = errno;
-		if (error == ENOENT)
-			pr_clutter("%s already doesn't exist.", filename);
-		else
-			pr_wrn("Cannot rm %s: %s", filename, strerror(errno));
-	}
-
-	free(filename);
-}
-
-static int
-write_metadata(struct cache_node *node)
-{
-	char *filename;
-	json_t *json;
-	int error;
-
-	json = node2json(node);
-	if (!json)
-		return EINVAL;
-	filename = str_concat(node->map.path, ".json");
-
-	pr_trc("echo \"$json\" > %s", filename);
-	if (json_dump_file(json, filename, JSON_INDENT(2)) != 0) {
-		error = pr_err("Unable to write %s; unknown cause.", filename);
-		goto end;
-	}
-
-	switch (node->ctx.type) {
-	case CT_RRDP:
-		rrdpctx_post_index(node->ctx.v.rrdp);
-		break;
-	case CT_RSYNC:
-	case CT_TA:
-		break;
-	}
-
-	error = 0;
-end:	free(filename);
-	json_decref(json);
-	return error;
-}
-
 /*
  * During DLS_ONGOING, the rsync subprocess downloaded the files.
  * However, because it had to do an execvp(), the subprocess was unable to
@@ -884,8 +887,10 @@ rsync_post_process(struct cache_node *node)
 	case CT_RSYNC:
 		if (rsync_reindex(&node->ctx.v.rsync, &node->map) != 0)
 			return VV_FAIL;
+		write_metadata(node);
 		return VV_CONTINUE;
 	case CT_TA:
+		write_metadata(node);
 		return VV_CONTINUE;
 
 	case CT_RRDP:
@@ -951,7 +956,6 @@ do_refresh(struct cache_table *tbl, struct uri const *uri,
 		node->verdict = dl(node);
 		if (node->verdict == VV_BUSY)
 			goto ongoing;
-		write_metadata(node);
 		downloaded = true;
 
 		mutex_lock(&tbl->lock);
