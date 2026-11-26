@@ -347,7 +347,7 @@ handle_deltas(struct update_notification *notif, struct rrdp_ctx *ctx,
 	int error;
 
 	if (notif->deltas.len == 0) {
-		pr_wrn("There's no delta list to process.");
+		pr_trc("There's no delta list to process.");
 		return ENOENT;
 	}
 
