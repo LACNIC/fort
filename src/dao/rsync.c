@@ -438,6 +438,7 @@ rsync_cleanup(struct rsync_ctx *ctx)
 	return true;
 }
 
+/* "Free from memory." Does not extend to the cache files. */
 void
 rsync_free(struct rsync_ctx *ctx)
 {

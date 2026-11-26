@@ -301,7 +301,7 @@ file_nftw(const char *root, nftw_cb cb, void *arg)
 				if (error)
 					goto interrupted;
 			} else {
-				pr_wrn("Cannot traverse through %s: %s",
+				pr_trc("Cannot traverse through %s: %s",
 				    dirnode->path, strerror(error));
 				traversal_error = error;
 			}
@@ -335,7 +335,7 @@ file_nftw(const char *root, nftw_cb cb, void *arg)
 		error = errno;
 		closedir(dir);
 		if (error) {
-			pr_wrn("Cannot traverse through %s: %s",
+			pr_trc("Cannot traverse through %s: %s",
 			    dirnode->path, strerror(error));
 			traversal_error = error;
 		}

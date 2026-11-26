@@ -152,6 +152,7 @@ struct rpp_querier {
 #define METAFILE "meta.json"
 #define TAGNAME_VERSION "fort-version"
 
+/* "Delete from memory." Does not extend to the cache files. */
 static void
 delete_node(struct cache_table *tbl, struct cache_node *node, void *arg)
 {
@@ -835,23 +836,26 @@ rm_metadata(struct cache_node *node)
 	free(filename);
 }
 
-static void
+static int
 write_metadata(struct cache_node *node)
 {
 	char *filename;
 	json_t *json;
+	int error;
 
 	json = node2json(node);
 	if (!json)
-		return;
+		return EINVAL;
 	filename = str_concat(node->map.path, ".json");
 
 	pr_trc("echo \"$json\" > %s", filename);
-	if (json_dump_file(json, filename, JSON_INDENT(2)))
-		pr_err("Unable to write %s; unknown cause.", filename);
+	error = json_dump_file(json, filename, JSON_INDENT(2))
+	    ? pr_err("Unable to write %s; unknown cause.", filename)
+	    : 0;
 
 	free(filename);
 	json_decref(json);
+	return error;
 }
 
 /*
@@ -1347,7 +1351,11 @@ cleanup_node(struct cache_table *tbl, struct cache_node *node, void *arg)
 
 	if (salvage) {
 		pr_trc("    Preserving node.");
-		write_metadata(node);
+		if (write_metadata(node) != 0) {
+			pr_trc("    Cannot write index file; dropping node.");
+			file_rm_rf(node->map.path);
+			delete_node(tbl, node, NULL);
+		}
 	} else {
 		pr_trc("    Dropping node.");
 		file_rm_rf(node->map.path);

@@ -41,8 +41,6 @@ ck_json(struct rrdp_ctx const *src)
 	json_decref(json);
 
 	/* FIXME (test) not checking sessions */
-	if (TAILQ_EMPTY(&src->sessions))
-		ck_assert_int_eq(true, TAILQ_EMPTY(&dst->sessions));
 	ck_assert_str_eq(src->seq.pfx.str, dst->seq.pfx.str);
 	ck_assert_int_eq(src->seq.next_id, dst->seq.next_id);
 
@@ -75,14 +73,14 @@ step_add_fileref(struct rrdp_step *step, struct cache_file *file)
 }
 
 static void
-add_step(struct rrdp_session *session, char const *serial, int hashchr, ...)
+add_step(struct rrdp_ctx *ctx, char const *serial, int hashchr, ...)
 {
 	struct rrdp_step *step;
 	va_list ap;
 	struct cache_file *file;
 
 	step = pzalloc(sizeof(struct rrdp_step));
-	TAILQ_INSERT_TAIL(&session->steps, step, lh);
+	TAILQ_INSERT_TAIL(&ctx->steps, step, lh);
 
 	ck_assert_int_eq(0, str2serial(serial, &step->serial));
 
@@ -100,7 +98,6 @@ START_TEST(test_json)
 	/* TODO (fine) no cleanup */
 
 	struct rrdp_ctx ctx;
-	struct rrdp_session se1, se2;
 	struct cache_file *f1, *f2, *f3, *f4;
 
 	f1 = _cachefile_create("https://n/a.cer", "https/22/0", 0x0a);
@@ -108,28 +105,14 @@ START_TEST(test_json)
 	f3 = _cachefile_create("https://n/c.cer", "https/22/2", 0x0c);
 	f4 = _cachefile_create("https://n/d.cer", "https/22/3", 0x0d);
 
-	TAILQ_INIT(&ctx.sessions);
-
-	TAILQ_INSERT_TAIL(&ctx.sessions, &se1, lh);
-	se1.id = "session1";
-	TAILQ_INIT(&se1.steps);
-	add_step(&se1, "3", 0x03, f1, f4, NULL);
-	add_step(&se1, "2", 0x02, f2, f3, f4, NULL);
-	add_step(&se1, "1", 0x01, f1, f2, f3, NULL);
-	se1.fresh = false;
-	se1.fbs.ht = NULL;
-	ck_assert_int_eq(0, pthread_mutex_init(&se1.fbs.lock, NULL));
-
-	TAILQ_INSERT_TAIL(&ctx.sessions, &se2, lh);
-	se2.id = "session2";
-	TAILQ_INIT(&se2.steps);
-	add_step(&se2, "6", 0x06, f1, f4, NULL);
-	add_step(&se2, "5", 0x05, f2, f3, f4, NULL);
-	add_step(&se2, "4", 0x04, f1, f2, f3, NULL);
-	se2.fresh = true;
-	se2.fbs.ht = NULL;
-	ck_assert_int_eq(0, pthread_mutex_init(&se2.fbs.lock, NULL));
-
+	ctx.session_id = "session1";
+	TAILQ_INIT(&ctx.steps);
+	add_step(&ctx, "3", 0x03, f1, f4, NULL);
+	add_step(&ctx, "2", 0x02, f2, f3, f4, NULL);
+	add_step(&ctx, "1", 0x01, f1, f2, f3, NULL);
+	ctx.success = false;
+	ctx.fbs.ht = NULL;
+	ck_assert_int_eq(0, pthread_mutex_init(&ctx.fbs.lock, NULL));
 	cseq_init(&ctx.seq, "http/22", 4, false);
 
 	ck_json(&ctx);

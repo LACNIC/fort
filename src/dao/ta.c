@@ -30,6 +30,7 @@ tactx_create(char const *fallback)
 	return ctx;
 }
 
+/* "Free from memory." Does not extend to the cache files. */
 void
 tactx_free(struct ta_context *ctx)
 {
