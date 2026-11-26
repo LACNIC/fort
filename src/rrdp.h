@@ -25,6 +25,7 @@ struct rrdp_ctx;
 
 int rrdp_update(struct uri const *, char const *, time_t, bool *,
     struct rrdp_ctx **);
+void rrdpctx_post_index(struct rrdp_ctx *);
 void rrdpctx_print(struct rrdp_ctx *, int);
 bool rrdpctx_cleanup(struct rrdp_ctx *);
 void rrdpctx_free(struct rrdp_ctx *);

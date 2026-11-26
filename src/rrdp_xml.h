@@ -57,9 +57,9 @@ void notification_cleanup(struct update_notification *);
 int rrdpxml_fetch_notif(struct uri const *, time_t, bool *,
     struct update_notification *);
 int rrdpxml_explode_snapshot(struct update_notification const *,
-    struct files_ht *, struct cache_sequence *);
+    struct files_ht *, struct cache_sequence *, struct files_stailq *);
 int rrdpxml_explode_delta(struct update_notification *,
     struct notification_delta *,
-    struct files_ht *, struct cache_sequence *);
+    struct files_ht *, struct cache_sequence *, struct files_stailq *);
 
 #endif /* SRC_RRDP_XML_H_ */

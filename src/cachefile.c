@@ -200,11 +200,11 @@ filerefs_clone(struct files_ht *refs)
 
 	result.ht = NULL;
 
-	HASH_ITER(hh, refs->ht, src, tmp) {
+	HASH_ITER(hook.ht, refs->ht, src, tmp) {
 		dst = fileref_create(src->file);
 		urlstr = uri_str(&dst->file->map.url);
 		urlen = uri_len(&dst->file->map.url);
-		HASH_ADD_KEYPTR(hh, result.ht, urlstr, urlen, dst);
+		HASH_ADD_KEYPTR(hook.ht, result.ht, urlstr, urlen, dst);
 	}
 
 	return result;
@@ -215,8 +215,8 @@ filerefs_clear(struct files_ht *refs, bool rm_files)
 {
 	struct cache_file_ref *file, *tmp;
 
-	HASH_ITER(hh, refs->ht, file, tmp) {
-		HASH_DEL(refs->ht, file);
+	HASH_ITER(hook.ht, refs->ht, file, tmp) {
+		HASH_DELETE(hook.ht, refs->ht, file);
 		fileref_free(file, rm_files);
 	}
 }
@@ -238,7 +238,7 @@ filerefs_add_uri(struct files_ht *refs, struct cache_file *file,
 	urlstr = uri_str(&file->map.url);
 	urlen = uri_len(&file->map.url);
 
-	HASH_ADD_KEYPTR(hh, refs->ht, urlstr, urlen, ref);
+	HASH_ADD_KEYPTR(hook.ht, refs->ht, urlstr, urlen, ref);
 }
 
 void
@@ -255,7 +255,7 @@ filerefs_replace_uri(struct files_ht *refs, struct cache_file_ref *ref,
 	urlstr = uri_str(&ref->file->map.url);
 	urlen = uri_len(&ref->file->map.url);
 
-	HASH_OVERRIDE_KEYPTR(refs->ht, urlstr, urlen, ref, old);
+	HASH_OVERRIDE_KEYPTR(hook.ht, refs->ht, urlstr, urlen, ref, old);
 
 	if (old)
 		fileref_free(old, rm_file);
@@ -264,7 +264,7 @@ filerefs_replace_uri(struct files_ht *refs, struct cache_file_ref *ref,
 void
 filerefs_rm(struct files_ht *refs, struct cache_file_ref *ref)
 {
-	HASH_DEL(refs->ht, ref);
+	HASH_DELETE(hook.ht, refs->ht, ref);
 }
 
 struct cache_file_ref *
@@ -280,7 +280,7 @@ filerefs_find_uri(struct files_ht *refs, struct uri const *uri)
 	str = uri_str(uri);
 	len = uri_len(uri);
 
-	HASH_FIND(hh, refs->ht, str, len, file);
+	HASH_FIND(hook.ht, refs->ht, str, len, file);
 
 	return file;
 }
@@ -290,7 +290,7 @@ filerefs_clear_written(struct files_ht *refs)
 {
 	struct cache_file_ref *ref, *tmp;
 
-	HASH_ITER(hh, refs->ht, ref, tmp)
+	HASH_ITER(hook.ht, refs->ht, ref, tmp)
 		ref->file->flags &= ~CFF_WRITTEN;
 }
 
@@ -300,7 +300,7 @@ filerefs_write(json_t *json, struct files_ht *files)
 	struct cache_file_ref *ref, *tmp;
 	struct cache_file *file;
 
-	HASH_ITER(hh, files->ht, ref, tmp) {
+	HASH_ITER(hook.ht, files->ht, ref, tmp) {
 		file = ref->file;
 		if (!(file->flags & CFF_WRITTEN)) {
 			if (json_object_add(json,
@@ -334,7 +334,7 @@ json2files(json_t *jfiles, char const *path, struct files_ht *files)
 		}
 
 		id = fileref->file->id;
-		HASH_ADD_KEYSTR_SAFE(files->ht, id, fileref, old);
+		HASH_ADD_KEYSTR_SAFE(hook.ht, files->ht, id, fileref, old);
 		if (old) {
 			pr_err("Duplicate ID in JSON file list: %s", id);
 			fileref_free(fileref, true);
@@ -354,7 +354,7 @@ filerefs2json(struct files_ht *refs)
 
 	jfiles = json_array_new();
 
-	HASH_ITER(hh, refs->ht, fileref, tmp) {
+	HASH_ITER(hook.ht, refs->ht, fileref, tmp) {
 		if (json_array_add(jfiles, json_str_new(fileref->file->id))) {
 			json_decref(jfiles);
 			return NULL;
@@ -371,7 +371,7 @@ find_fileref(struct files_ht *ht, char const *key)
 	struct cache_file_ref *file;
 
 	keylen = strlen(key);
-	HASH_FIND(hh, ht->ht, key, keylen, file);
+	HASH_FIND(hook.ht, ht->ht, key, keylen, file);
 
 	return file;
 }
@@ -409,7 +409,7 @@ json2filerefs(json_t *parent, char const *name, struct files_ht *src_ht,
 		dst = fileref_create(src->file);
 		key = uri_str(&dst->file->map.url);
 		keylen = uri_len(&dst->file->map.url);
-		HASH_ADD_KEYPTR_SAFE(result->ht, key, keylen, dst, old);
+		HASH_ADD_KEYPTR_SAFE(hook.ht, result->ht, key, keylen, dst, old);
 		if (old) {
 			pr_wrn("File '%s' is listed more than once.",
 			    dst->file->map.path);
@@ -428,7 +428,7 @@ filerefs_print(struct files_ht *refs, int indent)
 {
 	struct cache_file_ref *ref, *tmp;
 
-	HASH_ITER(hh, refs->ht, ref, tmp)
+	HASH_ITER(hook.ht, refs->ht, ref, tmp)
 		fileref_print(ref, indent);
 }
 
@@ -442,6 +442,17 @@ fileref_print(struct cache_file_ref *ref, int indent)
 	    (void *) ref->file,
 	    uri_str(&ref->file->map.url),
 	    ref->file->map.path);
+}
+
+void
+filestailq_clear(struct files_stailq *files, bool rm_files)
+{
+	struct cache_file_ref *file;
+
+	while ((file = STAILQ_FIRST(files)) != NULL) {
+		STAILQ_REMOVE_HEAD(files, hook.ls);
+		fileref_free(file, rm_files);
+	}
 }
 
 json_t *
@@ -605,7 +616,7 @@ fallback_print(struct fallback *fb, int indent)
 	free(mftnum);
 	printf("committed:%u\n", fb->committed);
 
-	HASH_ITER(hh, fb->files.ht, ref, tmp)
+	HASH_ITER(hook.ht, fb->files.ht, ref, tmp)
 		fileref_print(ref, indent + 2);
 }
 
@@ -718,7 +729,7 @@ json2fallbacks(json_t *jfbs, struct fallback_ht *fbs, struct files_ht *files)
 			return error;
 		key = uri_str(&fb->rpkiManifest);
 		keylen = uri_len(&fb->rpkiManifest);
-		HASH_ADD_KEYPTR_SAFE(fbs->ht, key, keylen, fb, old);
+		HASH_ADD_KEYPTR_SAFE(hh, fbs->ht, key, keylen, fb, old);
 		if (old)
 			return pr_err("Table has multiple fallbacks named '%s'.",
 			    key);

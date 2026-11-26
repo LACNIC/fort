@@ -305,6 +305,7 @@ struct rrdp_xml_reader {
 
 	struct files_ht *rrdp_filerefs;
 	struct cache_sequence *rrdp_seq;
+	struct files_stailq *withdraws;
 };
 
 static enum token_read_result
@@ -1370,6 +1371,13 @@ bad:	return pr_err("(Line %u) File '%s' does not match its expected hash.",
 	    rdr->line, uri_str(&meta->uri));
 }
 
+static void
+withdraw_fileref(struct rrdp_xml_reader *rdr, struct cache_file_ref *fileref)
+{
+	HASH_DELETE(hook.ht, rdr->rrdp_filerefs->ht, fileref);
+	STAILQ_INSERT_TAIL(rdr->withdraws, fileref, hook.ls);
+}
+
 static enum token_read_result
 validate_hash(struct rrdp_xml_reader *rdr)
 {
@@ -1390,8 +1398,7 @@ validate_hash(struct rrdp_xml_reader *rdr)
 		if (validate_hash2(rdr, &rdr->c.sd.file, fileref->file->hash) != 0)
 			return TRR_ERR;
 
-		HASH_DEL(rdr->rrdp_filerefs->ht, fileref);
-		fileref_free(fileref, true);
+		withdraw_fileref(rdr, fileref);
 
 	} else {
 		if (rdr->c.sd.file.hash.set) {
@@ -1492,8 +1499,7 @@ run_withdraw(struct rrdp_xml_reader *rdr)
 	if (validate_hash2(rdr, &rdr->c.sd.file, fileref->file->hash) != 0)
 		return TRR_ERR;
 
-	HASH_DEL(rdr->rrdp_filerefs->ht, fileref);
-	fileref_free(fileref, true);
+	withdraw_fileref(rdr, fileref);
 	return TRR_OK;
 }
 
@@ -2054,7 +2060,7 @@ state_xmldecl_tag(struct rrdp_xml_reader *rdr)
 }
 
 static struct rrdp_xml_reader *
-rrdp_xml_create(enum rrdp_xml_type type)
+rrdp_xml_create(enum rrdp_xml_type type, struct files_stailq *withdraws)
 {
 	struct rrdp_xml_reader *result;
 
@@ -2078,6 +2084,7 @@ rrdp_xml_create(enum rrdp_xml_type type)
 
 	result->line = 1;
 	result->state = state_xmldecl_tag;
+	result->withdraws = withdraws;
 
 	return result;
 }
@@ -2291,7 +2298,7 @@ rrdpxml_fetch_notif(struct uri const *url, time_t mtim, bool *changed,
 	struct write_callback_arg wargs;
 	int error;
 
-	wargs.rdr = rrdp_xml_create(RXT_NOTIF);
+	wargs.rdr = rrdp_xml_create(RXT_NOTIF, NULL);
 	wargs.rdr->notif_uri = url;
 	wargs.total_bytes = 0;
 	wargs.hasher = NULL;
@@ -2339,7 +2346,8 @@ end:	rrdp_xml_destroy(wargs.rdr);
 int
 rrdpxml_explode_snapshot(struct update_notification const *notif,
     struct files_ht *files,
-    struct cache_sequence *seq)
+    struct cache_sequence *seq,
+    struct files_stailq *withdraws)
 {
 	struct uri const *url;
 	struct write_callback_arg wargs;
@@ -2354,7 +2362,7 @@ rrdpxml_explode_snapshot(struct update_notification const *notif,
 		goto pop;
 	}
 
-	wargs.rdr = rrdp_xml_create(RXT_SNAPSHOT);
+	wargs.rdr = rrdp_xml_create(RXT_SNAPSHOT, withdraws);
 	wargs.rdr->c.sd.notif_id = &notif->session;
 	wargs.rdr->rrdp_filerefs = files;
 	wargs.rdr->rrdp_seq = seq;
@@ -2395,7 +2403,8 @@ int
 rrdpxml_explode_delta(struct update_notification *notif,
     struct notification_delta *delta,
     struct files_ht *files,
-    struct cache_sequence *seq)
+    struct cache_sequence *seq,
+    struct files_stailq *withdraws)
 {
 	struct uri const *url;
 	struct rrdp_id notif_id;
@@ -2414,7 +2423,7 @@ rrdpxml_explode_delta(struct update_notification *notif,
 	notif_id.session_id = notif->session.session_id;
 	notif_id.serial = delta->serial;
 
-	wargs.rdr = rrdp_xml_create(RXT_DELTA);
+	wargs.rdr = rrdp_xml_create(RXT_DELTA, withdraws);
 	wargs.rdr->c.sd.notif_id = &notif_id;
 	wargs.rdr->rrdp_filerefs = files;
 	wargs.rdr->rrdp_seq = seq;

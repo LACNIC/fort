@@ -580,7 +580,7 @@ collect_meta(struct cache_table *tbl, struct dirent *dir)
 
 	node = json2node(root, cage_path);
 	if (node != NULL) {
-		HASH_ADD_KEYPTR_SAFE(tbl->nodes,
+		HASH_ADD_KEYPTR_SAFE(hh, tbl->nodes,
 		    uri_str(&node->map.url), uri_len(&node->map.url),
 		    node, old);
 		if (old) {
@@ -849,11 +849,22 @@ write_metadata(struct cache_node *node)
 	filename = str_concat(node->map.path, ".json");
 
 	pr_trc("echo \"$json\" > %s", filename);
-	error = json_dump_file(json, filename, JSON_INDENT(2))
-	    ? pr_err("Unable to write %s; unknown cause.", filename)
-	    : 0;
+	if (json_dump_file(json, filename, JSON_INDENT(2)) != 0) {
+		error = pr_err("Unable to write %s; unknown cause.", filename);
+		goto end;
+	}
 
-	free(filename);
+	switch (node->ctx.type) {
+	case CT_RRDP:
+		rrdpctx_post_index(node->ctx.v.rrdp);
+		break;
+	case CT_RSYNC:
+	case CT_TA:
+		break;
+	}
+
+	error = 0;
+end:	free(filename);
 	json_decref(json);
 	return error;
 }
@@ -937,7 +948,6 @@ do_refresh(struct cache_table *tbl, struct uri const *uri,
 		mutex_unlock(&tbl->lock);
 
 		node->attempt_ts = time_fatal();
-		rm_metadata(node);
 		node->verdict = dl(node);
 		if (node->verdict == VV_BUSY)
 			goto ongoing;

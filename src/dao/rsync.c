@@ -81,7 +81,7 @@ find_path_in_fallbacks(struct fallback_ht *fbs, char const *path)
 
 	/* TODO (performance) The data structure is not great for this lookup */
 	HASH_ITER(hh, fbs->ht, fb, tmp1)
-		HASH_ITER(hh, fb->files.ht, ref, tmp2)
+		HASH_ITER(hook.ht, fb->files.ht, ref, tmp2)
 			if (strcmp(path, ref->file->map.path) == 0)
 				return ref->file;
 
@@ -272,7 +272,7 @@ find_fallbacks(struct rsync_ctx *ctx, char *path)
 	array.files = pcalloc(array.capacity, sizeof(struct cache_file *));
 
 	HASH_ITER(hh, ctx->fbs.ht, fb, tmpf)
-		HASH_ITER(hh, fb->files.ht, ref, tmpr)
+		HASH_ITER(hook.ht, fb->files.ht, ref, tmpr)
 			if (strcmp(ref->file->map.path, path) == 0) {
 				if (array.count == array.capacity) {
 					array.capacity <<= 1;
@@ -425,8 +425,8 @@ rsync_cleanup(struct rsync_ctx *ctx)
 	}
 
 	pr_trc("    Committing new/ files into rmt/.");
-	if (HASH_COUNT(ctx->new.ht) != 0) {
-		HASH_ITER(hh, ctx->new.ht, new, tmpn)
+	if (HASH_CNT(hook.ht, ctx->new.ht) != 0) {
+		HASH_ITER(hook.ht, ctx->new.ht, new, tmpn)
 			if (commit(ctx, new) != 0)
 				return false;
 		file_rm_rf(ctx->new_path);
@@ -490,11 +490,11 @@ rsync_ctx2json(struct rsync_ctx *ctx)
 
 	/* TODO (performance) Maybe add a linked list */
 	HASH_ITER(hh, ctx->fbs.ht, fb, tmp)
-		HASH_ITER(hh, fb->files.ht, ref, tmpr)
+		HASH_ITER(hook.ht, fb->files.ht, ref, tmpr)
 			ref->file->flags &= ~CFF_WRITTEN;
 
 	HASH_ITER(hh, ctx->fbs.ht, fb, tmp) {
-		HASH_ITER(hh, fb->files.ht, ref, tmpr) {
+		HASH_ITER(hook.ht, fb->files.ht, ref, tmpr) {
 			file = ref->file;
 			if (!(file->flags & CFF_WRITTEN)) {
 				if (json_object_add(files, file->map.path,

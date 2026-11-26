@@ -40,6 +40,11 @@ struct rrdp_ctx {
 
 	/* Refresh successful during this cycle? */
 	bool success;
+
+	/* Steps that have been queued to be deleted later */
+	struct rrdp_steps postponed_steps;
+	/* Files that have been queued to be deleted later */
+	struct files_stailq postponed_files;
 };
 
 enum rrdp_dao_state {
@@ -102,6 +107,19 @@ steps_clear(struct rrdp_steps *steps, bool rm_files)
 	}
 }
 
+/* Moves all the steps from @src to the tail of @dst. */
+static void
+steps_transfer(struct rrdp_steps *dst, struct rrdp_steps *src)
+{
+	struct rrdp_step *step;
+
+	/* TODO (performance) This is O(n); could be O(1). */
+	while ((step = TAILQ_FIRST(src)) != NULL) {
+		TAILQ_REMOVE(src, step, lh);
+		TAILQ_INSERT_TAIL(dst, step, lh);
+	}
+}
+
 static void
 init_steps(struct rrdp_steps *steps, struct update_notification *notif)
 {
@@ -135,6 +153,8 @@ rrdpctx_create(void)
 	TAILQ_INIT(&ctx->steps);
 	panic_on_fail(pthread_mutex_init(&ctx->fbs.lock, NULL),
 	    "pthread_mutex_init");
+	TAILQ_INIT(&ctx->postponed_steps);
+	STAILQ_INIT(&ctx->postponed_files);
 
 	return ctx;
 }
@@ -150,6 +170,8 @@ rrdpctx_free(struct rrdp_ctx *ctx)
 	steps_clear(&ctx->steps, false);
 	fallbacks_cleanup(&ctx->fbs, false);
 	cseq_cleanup(&ctx->seq);
+	steps_clear(&ctx->postponed_steps, false);
+	filestailq_clear(&ctx->postponed_files, false);
 	free(ctx);
 }
 
@@ -281,22 +303,20 @@ handle_snapshot(struct rrdp_ctx *ctx, struct update_notification *notif)
 		TAILQ_INSERT_HEAD(&steps, step, lh);
 	}
 
-	error = rrdpxml_explode_snapshot(notif, &step->files, &ctx->seq);
+	error = rrdpxml_explode_snapshot(notif, &step->files, &ctx->seq,
+	    &ctx->postponed_files);
 	if (error) {
 		steps_clear(&steps, true);
 		return error;
 	}
 
 	free(ctx->session_id);
-	steps_clear(&ctx->steps, true); // XXX postpone true
+	/* We must not rm the files until the index file has been updated */
+	steps_transfer(&ctx->postponed_steps, &ctx->steps);
 
 	ctx->session_id = pstrdup(notif->session.session_id);
 	ctx->success = true;
-	/* TODO (performance) This is O(n); could be O(1). */
-	while ((step = TAILQ_FIRST(&steps)) != NULL) {
-		TAILQ_REMOVE(&steps, step, lh);
-		TAILQ_INSERT_TAIL(&ctx->steps, step, lh);
-	}
+	steps_transfer(&ctx->steps, &steps);
 
 	return 0;
 }
@@ -304,8 +324,7 @@ handle_snapshot(struct rrdp_ctx *ctx, struct update_notification *notif)
 static int
 handle_delta(struct update_notification *notif,
     struct notification_delta *delta,
-    struct rrdp_ctx *ctx,
-    struct cache_sequence *seq)
+    struct rrdp_ctx *ctx)
 {
 	struct rrdp_step *step;
 
@@ -314,12 +333,13 @@ handle_delta(struct update_notification *notif,
 	step->delta_hash = delta->meta.hash;
 	TAILQ_INSERT_HEAD(&ctx->steps, step, lh);
 
-	return rrdpxml_explode_delta(notif, delta, &step->files, seq);
+	return rrdpxml_explode_delta(notif, delta, &step->files, &ctx->seq,
+	    &ctx->postponed_files);
 }
 
 static int
 handle_deltas(struct update_notification *notif, struct rrdp_ctx *ctx,
-    int serial_diff, struct cache_sequence *cseq)
+    int serial_diff)
 {
 	struct rrdp_serial *old;
 	struct rrdp_serial *new;
@@ -344,7 +364,7 @@ handle_deltas(struct update_notification *notif, struct rrdp_ctx *ctx,
 		    serial_diff, notif->deltas.len);
 
 	for (d = serial_diff - 1; d >= 0; d--) {
-		error = handle_delta(notif, &notif->deltas.arr[d], ctx, cseq);
+		error = handle_delta(notif, &notif->deltas.arr[d], ctx);
 		if (error)
 			return error;
 	}
@@ -428,7 +448,7 @@ rrdp_update(struct uri const *notif_uri, char const *cage, time_t mtim,
 		pr_trc("The Notification's serial changed: %s -> %s",
 		    step->serial.str, notif.session.serial.str);
 
-		error = handle_deltas(&notif, ctx, serial_diff, &ctx->seq);
+		error = handle_deltas(&notif, ctx, serial_diff);
 		if (error) {
 snapshot:		pr_trc("Falling back to snapshot.");
 			error = handle_snapshot(ctx, &notif);
@@ -439,7 +459,9 @@ snapshot:		pr_trc("Falling back to snapshot.");
 		ctx->success = true;
 
 	} else {
-		pr_trc("The Notification changed, but the session ID and serial didn't, and no session desync was detected.");
+		pr_trc("The Notification changed, "
+		    "but the session ID and serial didn't, "
+		    "and no session desync was detected.");
 		ctx->success = true;
 		*changed = false;
 	}
@@ -447,6 +469,13 @@ snapshot:		pr_trc("Falling back to snapshot.");
 notif:	notification_cleanup(&notif);
 pop:	fnstack_pop();
 	return error;
+}
+
+void
+rrdpctx_post_index(struct rrdp_ctx *ctx)
+{
+	steps_clear(&ctx->postponed_steps, true);
+	filestailq_clear(&ctx->postponed_files, true);
 }
 
 static void
@@ -952,7 +981,7 @@ rrdpstep_print(struct rrdp_step *step, int indent)
 	hash_print(&step->delta_hash);
 	printf("\n");
 
-	HASH_ITER(hh, step->files.ht, ref, tmp)
+	HASH_ITER(hook.ht, step->files.ht, ref, tmp)
 		fileref_print(ref, indent + 2);
 }
 

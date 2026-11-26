@@ -69,7 +69,7 @@ step_add_fileref(struct rrdp_step *step, struct cache_file *file)
 	fileref = fileref_create(file);
 	urlstr = uri_str(&fileref->file->map.url);
 	urlen = uri_len(&fileref->file->map.url);
-	HASH_ADD_KEYPTR(hh, step->files.ht, urlstr, urlen, fileref);
+	HASH_ADD_KEYPTR(hook.ht, step->files.ht, urlstr, urlen, fileref);
 }
 
 static void

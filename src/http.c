@@ -216,7 +216,7 @@ check_same_origin(struct uri const *src, char const *redirect)
 }
 
 /*
- * Download @src into @dst; HTTP assumed.
+ * Download @src; HTTP assumed.
  *
  * If @changed returns true, the file was downloaded normally.
  * If @changed returns false, the file has not been modified since @ims.

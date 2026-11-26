@@ -920,7 +920,7 @@ explode_snapshot(char const *ss_hash)
 	files.ht = NULL;
 	cseq_init(&seq, "tmp/rrdp", 12, false);
 
-	ck_assert_int_eq(0, rrdpxml_explode_snapshot(&notif, &files, &seq));
+	ck_assert_int_eq(0, rrdpxml_explode_snapshot(&notif, &files, &seq, NULL));
 
 	hash_teardown();
 }
@@ -948,7 +948,7 @@ explode_snapshot_error(char const *errmsg)
 	cseq_init(&seq, "tmp/rrdp", 12, false);
 
 	last_errmsg[0] = 0;
-	ck_assert_int_eq(EINVAL, rrdpxml_explode_snapshot(&notif, &files, &seq));
+	ck_assert_int_eq(EINVAL, rrdpxml_explode_snapshot(&notif, &files, &seq, NULL));
 	ck_assert_str_eq(errmsg, last_errmsg);
 
 	hash_teardown();
@@ -1293,7 +1293,7 @@ explode_delta(char const *ss_hash)
 	files.ht = NULL;
 	cseq_init(&seq, "tmp/rrdp", 12, false);
 
-	ck_assert_int_eq(0, rrdpxml_explode_delta(&notif, &delta, &files, &seq));
+	ck_assert_int_eq(0, rrdpxml_explode_delta(&notif, &delta, &files, &seq, NULL));
 
 	hash_teardown();
 }

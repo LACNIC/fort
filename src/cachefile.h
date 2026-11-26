@@ -4,6 +4,7 @@
 #include <openssl/sha.h>
 #include <stdatomic.h>
 #include <stdbool.h>
+#include <sys/queue.h>
 #include <jansson.h>
 
 #include "asn1/asn1c/INTEGER.h"
@@ -43,7 +44,10 @@ json_t *cachefile2json(struct cache_file *);
 
 struct cache_file_ref {
 	struct cache_file *file;
-	UT_hash_handle hh;		/* Hash table hook */
+	union {
+		UT_hash_handle ht;			/* Hash table hook */
+		STAILQ_ENTRY(cache_file_ref) ls;	/* List hook */
+	} hook;
 };
 
 struct files_ht {
@@ -71,6 +75,10 @@ int json2filerefs(json_t *, char const *, struct files_ht *, struct files_ht *);
 
 void filerefs_print(struct files_ht *, int);
 void fileref_print(struct cache_file_ref *, int);
+
+STAILQ_HEAD(files_stailq, cache_file_ref);
+
+void filestailq_clear(struct files_stailq *, bool);
 
 struct mft_meta {
 	struct cache_file *file;
