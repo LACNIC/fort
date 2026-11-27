@@ -1293,32 +1293,30 @@ state_publish_content(struct rrdp_xml_reader *rdr)
 	if (res != TRR_OK)
 		return res;
 
-	chr = rdr->buf[0];
+	res = get_char2(rdr, &rdr->tkn1, 0, &chr);
+	if (res != TRR_OK)
+		return res;
 	if (chr == '<') {
-		res = get_char(rdr, 1, &chr);
+		res = next_tkn(rdr, &rdr->tkn1);
 		if (res != TRR_OK)
 			return res;
-		switch (chr) {
-		case '/':
+		switch (rdr->tkn1.type) {
+		case XTT_OPENING_CLOSURE:
 			if (b64d2f_finish(&rdr->c.sd.b64, hash) != 0)
 				return TRR_ERR;
 			register_fileref(rdr, hash);
 			cleanup_sd(rdr);
 
 			rdr->state = state_publish_closure;
-			return advance_buffer(rdr, 2u);
-		case '!':
-			res = next_metadata(rdr, &rdr->tkn1);
-			if (res != TRR_OK)
-				return res;
-			if (rdr->tkn1.type != XTT_COMMENT)
-				return fail_unexpected_token(rdr, &rdr->tkn1);
-
+			return TRR_OK;
+		case XTT_COMMENT:
 			rdr->state = state_throw_away_comment;
 			rdr->next_state = state_publish_content;
 			return TRR_OK;
 		default:
-			return unexpected_tkn(rdr, "", chr);
+			pr_err("(Line %u) Unexpected token: '%s'",
+			    rdr->line, rdr->tkn1.str);
+			return TRR_ERR;
 		}
 	}
 
@@ -2109,13 +2107,13 @@ rrdp_xml_parse(struct rrdp_xml_reader *rdr, char const *in, size_t inlen)
 			memset(&rdr->tkn3, 0, sizeof(rdr->tkn3));
 			break;
 		case TRR_MORE:
-			pr_clutter("TRR_MORE. Tokens: '%.*s' '%.*s' '%.*s'",
-			    (int)rdr->tkn1.len, rdr->tkn1.str,
-			    (int)rdr->tkn2.len, rdr->tkn2.str,
-			    (int)rdr->tkn3.len, rdr->tkn3.str);
 			commit_partial_token(rdr, &rdr->tkn1);
 			commit_partial_token(rdr, &rdr->tkn2);
 			commit_partial_token(rdr, &rdr->tkn3);
+			pr_trc("TRR_MORE. Tokens: '%.*s' '%.*s' '%.*s'",
+			    (int)rdr->tkn1.len, rdr->tkn1.str,
+			    (int)rdr->tkn2.len, rdr->tkn2.str,
+			    (int)rdr->tkn3.len, rdr->tkn3.str);
 			break;
 		case TRR_ERR:
 			return EINVAL;

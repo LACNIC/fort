@@ -561,6 +561,38 @@ START_TEST(notif_micro_drip_feed)
 }
 END_TEST
 
+START_TEST(notif_chunks)
+{
+	char const *XML = " " NOTIF_START NSNAPSHOT NDELTA("23") NDELTA("22") NOTIF_END;
+	char xml[450];
+	size_t xmlen, i;
+
+	xmlen = strlen(XML);
+	ck_assert_uint_lt(xmlen, sizeof(xml));
+	strcpy(xml, XML);
+
+	input[0].xml = xml;
+	input[0].errmsg = NULL;
+	input[0].drip_feed = false;
+	input[1].errmsg = NULL;
+	input[1].drip_feed = false;
+	memset(&input[2], 0, sizeof(input[2]));
+
+	for (i = 0; i < (xmlen - 1); i++) {
+		xml[i] = 0;
+		input[1].xml = xml + i + 1;
+
+		ck_notif(2);
+
+		xml[i] = xml[i + 1];
+	}
+
+	xml[i] = 0;
+	input[1].xml = "";
+	ck_notif(2);
+}
+END_TEST
+
 START_TEST(notif_long_token)
 {
 	/*
@@ -1218,6 +1250,60 @@ START_TEST(snapshot_base64_newlines)
 }
 END_TEST
 
+START_TEST(snapshot_micro_drip_feed)
+{
+	init_xml1("<snapshot xmlns=\"" XMLNS "\" version=\"1\" session_id=\"abcd\" serial=\"12\">\n"
+			"<publish uri=\"rsync://a/b/c.cer\">MTkyLjAuMi4yNA==</publish>\n"
+			"<publish uri=\"rsync://a/b/e.crl\">MjAzLjAuMTEzLjQ4</publish>\n"
+		"</snapshot>", NULL);
+	input[0].drip_feed = true;
+	explode_snapshot("713e74351ef6e587fdf198229c3058052cdecd43271f6b21e8f81e4d40e8f42f");
+
+	ck_file("192.0.2.24", "tmp/rrdp/C");
+	ck_file("203.0.113.48", "tmp/rrdp/D");
+}
+END_TEST
+
+START_TEST(snapshot_chunks)
+{
+	char const *XML =
+		" <snapshot xmlns=\"" XMLNS "\" version=\"1\" session_id=\"abcd\" serial=\"12\">\n"
+		"	<publish uri=\"rsync://a/b/c.cer\">MTkyLjAuMi4yNA==</publish>\n"
+		"	<publish uri=\"rsync://a/b/e.crl\">MjAzLj<!-- tomatoes -->AuMTEzLjQ4</publish>\n"
+		"</snapshot>";
+	char xml[256];
+	size_t xmlen, i;
+
+	xmlen = strlen(XML);
+	ck_assert_uint_lt(xmlen, sizeof(xml));
+	strcpy(xml, XML);
+
+	input[0].xml = xml;
+	input[0].errmsg = NULL;
+	input[0].drip_feed = false;
+	input[1].errmsg = NULL;
+	input[1].drip_feed = false;
+	memset(&input[2], 0, sizeof(input[2]));
+
+	for (i = 0; i < (xmlen - 1); i++) {
+		xml[i] = 0;
+		input[1].xml = xml + i + 1;
+
+		explode_snapshot("810e906381907b7ee41fb93d5abe816b17d35064cc70375bf129ecf6d55468f9");
+		ck_file("192.0.2.24", "tmp/rrdp/C");
+		ck_file("203.0.113.48", "tmp/rrdp/D");
+
+		xml[i] = xml[i + 1];
+	}
+
+	xml[i] = 0;
+	input[1].xml = "";
+	explode_snapshot("810e906381907b7ee41fb93d5abe816b17d35064cc70375bf129ecf6d55468f9");
+	ck_file("192.0.2.24", "tmp/rrdp/C");
+	ck_file("203.0.113.48", "tmp/rrdp/D");
+}
+END_TEST
+
 START_TEST(snapshot_withdraw)
 {
 	init_xml1(
@@ -1271,12 +1357,29 @@ START_TEST(snapshot_base64_newline_counting)
 END_TEST
 
 static void
-explode_delta(char const *ss_hash)
+add_cache_file(struct files_ht *files, char const *uristr, char const *pathstr,
+    int hashchr)
+{
+	struct uri uri;
+	char *path;
+	unsigned char hash[SHA256_DIGEST_LENGTH];
+	struct cache_file *file;
+
+	__URI_INIT(&uri, uristr);
+	path = pstrdup(pathstr);
+	memset(hash, hashchr, SHA256_DIGEST_LENGTH);
+	file = cachefile_create(&uri, path, strrchr(path, '/'), hash);
+
+	filerefs_add_uri(files, file, 1);
+}
+
+static void
+explode_delta(char const *ss_hash, struct files_ht *files,
+    struct files_stailq *withdraws)
 {
 	struct uri url;
 	struct update_notification notif = { 0 };
 	struct notification_delta delta;
-	struct files_ht files;
 	struct cache_sequence seq;
 
 	touch_dir("tmp");
@@ -1290,24 +1393,169 @@ explode_delta(char const *ss_hash)
 	ck_assert_int_eq(0, str2serial("10", &delta.serial));
 	__URI_INIT(&delta.meta.uri, "https://a/d10.xml");
 	ck_assert_int_eq(0, str2hash(ss_hash, strlen(ss_hash), &delta.meta.hash));
-	files.ht = NULL;
 	cseq_init(&seq, "tmp/rrdp", 12, false);
 
-	ck_assert_int_eq(0, rrdpxml_explode_delta(&notif, &delta, &files, &seq, NULL));
+	STAILQ_INIT(withdraws);
+
+	ck_assert_int_eq(0, rrdpxml_explode_delta(&notif, &delta, files, &seq,
+	    withdraws));
 
 	hash_teardown();
 }
 
-START_TEST(delta_minimal)
+static void
+ck_files_ht(struct files_ht *files, ...)
 {
+	char const *expected;
+	struct cache_file_ref *actual;
+	unsigned int n;
+	struct uri uri;
+	va_list vl;
+
+	va_start(vl, files);
+	for (n = 0; va_arg(vl, char const *) != NULL; n++)
+		;
+	va_end(vl);
+
+	ck_assert_uint_eq(n, HASH_CNT(hook.ht, files->ht));
+
+	va_start(vl, files);
+	for (n = 0; (expected = va_arg(vl, char const *)) != NULL; n++) {
+		__URI_INIT(&uri, expected);
+		actual = filerefs_find_uri(files, &uri);
+		ck_assert_ptr_ne(NULL, actual);
+		ck_assert_str_eq(expected, uri_str(&actual->file->map.url));
+	}
+	va_end(vl);
+}
+
+static bool
+has_withdraw(struct files_stailq *list, char const *wanted)
+{
+	struct cache_file_ref *node;
+
+	STAILQ_FOREACH(node, list, hook.ls)
+		if (strcmp(uri_str(&node->file->map.url), wanted) == 0)
+			return true;
+
+	return false;
+}
+
+static void
+ck_withdraws(struct files_stailq *withdraws, ...)
+{
+	char const *expected;
+	struct cache_file_ref *actual;
+	unsigned int n, na;
+	va_list vl;
+
+	va_start(vl, withdraws);
+	for (n = 0; va_arg(vl, char const *) != NULL; n++)
+		;
+	va_end(vl);
+	na = 0;
+	STAILQ_FOREACH(actual, withdraws, hook.ls)
+		na++;
+	ck_assert_uint_eq(n, na);
+
+	va_start(vl, withdraws);
+	for (n = 0; (expected = va_arg(vl, char const *)) != NULL; n++)
+		if (!has_withdraw(withdraws, expected))
+			ck_abort_msg("withdraw not found in list: %s", expected);
+	va_end(vl);
+}
+
+static void
+basic_delta(bool drip_feed)
+{
+	struct files_ht files = { 0 };
+	struct files_stailq withdraws;
+
+	add_cache_file(&files, "rsync://a/mod/a.roa", "tmp/rrdp/A", 0x11);
+	add_cache_file(&files, "rsync://a/mod/b.crl", "tmp/rrdp/B", 0x22);
 	init_xml1(
-		"<delta xmlns=\"" XMLNS "\" version=\"1\" session_id=\"abcd\" serial=\"10\">"
-			"<publish uri=\"rsync://a/mod/c.cer\">ZXhhbXBsZTE=</publish>"
+		"<delta xmlns=\"" XMLNS "\" version=\"1\" session_id=\"abcd\" serial=\"10\">\n"
+		"	<publish uri=\"rsync://a/mod/c.cer\">ZGVsdGFfbWluaW1hbA==</publish>\n"
+		"	<withdraw uri=\"rsync://a/mod/b.crl\" hash=\"2222222222222222222222222222222222222222222222222222222222222222\"/>\n"
 		"</delta>",
 		NULL
 	);
-	explode_delta("be27b8719562b47d8645c46c7bc0eb4030aaf1fcbbb5548cc390058d852c73e2");
-	ck_file("example1", "tmp/rrdp/C");
+	input[0].drip_feed = drip_feed;
+
+	explode_delta("d2e00b357c450b6cdadb8cb7b5a35009d3a9fdd6228a583c2bf3776da8965ec2",
+	    &files, &withdraws);
+
+	ck_file("delta_minimal", "tmp/rrdp/C");
+	ck_files_ht(&files, "rsync://a/mod/a.roa", "rsync://a/mod/c.cer", NULL);
+	ck_withdraws(&withdraws, "rsync://a/mod/b.crl", NULL);
+}
+
+START_TEST(delta_minimal)
+{
+	basic_delta(false);
+}
+END_TEST
+
+START_TEST(delta_micro_drip_feed)
+{
+	basic_delta(true);
+}
+END_TEST
+
+static void
+ck_chunked_delta(char *chunk1, char *chunk2)
+{
+	struct files_ht files = { 0 };
+	struct files_stailq withdraws;
+
+	add_cache_file(&files, "rsync://a/mod/a.roa", "tmp/rrdp/A", 0x11);
+	add_cache_file(&files, "rsync://a/mod/b.crl", "tmp/rrdp/B", 0x22);
+
+	printf("-----------\n");
+	printf("chunk1: '%s'\n", chunk1);
+	printf("chunk2: '%s'\n", chunk2);
+
+	input[0].xml = chunk1;
+	input[1].xml = chunk2;
+	explode_delta("e5a2604fe7c6a49c8e130ccebd5de836e62ea3de1d1e72efd026f054b39499a4",
+	    &files, &withdraws);
+
+	ck_file("chunked", "tmp/rrdp/C");
+	ck_files_ht(&files, "rsync://a/mod/a.roa", "rsync://a/mod/c.cer", NULL);
+	ck_withdraws(&withdraws, "rsync://a/mod/b.crl", NULL);
+}
+
+START_TEST(delta_chunks)
+{
+	char const *XML =
+		" <delta xmlns=\"" XMLNS "\" version=\"1\" session_id=\"abcd\" serial=\"10\">\n"
+		"	<publish uri=\"rsync://a/mod/c.cer\">Y2h1bmtlZA==</publish>\n"
+		"	<withdraw uri=\"rsync://a/mod/b.crl\" hash=\"2222222222222222222222222222222222222222222222222222222222222222\"/>\n"
+		"</delta>";
+	char xml[300];
+	size_t xmlen, i;
+
+	xmlen = strlen(XML);
+	ck_assert_uint_lt(xmlen, sizeof(xml));
+	strcpy(xml, XML);
+
+	input[0].errmsg = NULL;
+	input[0].drip_feed = false;
+	input[1].errmsg = NULL;
+	input[1].drip_feed = false;
+	memset(&input[2], 0, sizeof(input[2]));
+
+	for (i = 0; i < (xmlen - 1); i++) {
+		xml[i] = 0;
+		input[1].xml = xml + i + 1;
+
+		ck_chunked_delta(xml, xml + i + 1);
+
+		xml[i] = xml[i + 1];
+	}
+
+	xml[i] = 0;
+	ck_chunked_delta(xml, "");
 }
 END_TEST
 
@@ -1316,6 +1564,11 @@ create_suite(void)
 {
 	Suite *suite;
 	TCase *xml;
+
+	/*
+	 * TODO (test) the "chunk" tests are torturing the SSD.
+	 * Might want to mock the file writes.
+	 */
 
 	xml = tcase_create("xml");
 	tcase_add_test(xml, notif_minimal);
@@ -1332,6 +1585,7 @@ create_suite(void)
 	tcase_add_test(xml, notif_massive_whitespace);
 	tcase_add_test(xml, notif_drip_feed_whitespace);
 	tcase_add_test(xml, notif_micro_drip_feed);
+	tcase_add_test(xml, notif_chunks);
 	tcase_add_test(xml, notif_long_token);
 	tcase_add_test(xml, notif_long_url);
 	tcase_add_test(xml, notif_long_serial);
@@ -1346,10 +1600,14 @@ create_suite(void)
 	tcase_add_test(xml, notif_misplaced_attribute);
 	tcase_add_test(xml, snapshot_base64);
 	tcase_add_test(xml, snapshot_base64_newlines);
+	tcase_add_test(xml, snapshot_micro_drip_feed);
+	tcase_add_test(xml, snapshot_chunks);
 	tcase_add_test(xml, snapshot_withdraw);
 	tcase_add_test(xml, snapshot_bad_data_types);
 	tcase_add_test(xml, snapshot_base64_newline_counting);
 	tcase_add_test(xml, delta_minimal);
+	tcase_add_test(xml, delta_micro_drip_feed);
+	tcase_add_test(xml, delta_chunks);
 
 	suite = suite_create("RRDP XML");
 	suite_add_tcase(suite, xml);
